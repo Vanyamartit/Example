@@ -8,3 +8,4 @@ Recommendations:
 - File path used by the app: ./assets/textures/stone.png
 
 After adding the file, reload index.html (Ctrl+F5).
+fgdfgdf
