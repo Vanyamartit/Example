@@ -1,0 +1,173 @@
+<!doctype html>
+
+<html lang="ru">
+
+  <head>
+
+    <meta charset="utf-8" />
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>10x10x10 Minecraft Style - Three.js</title>
+    <link rel="icon" href="data:,">
+
+    <style>
+
+      html, body { height: 100%; margin: 0; }
+
+      body { background: #0e0e10; color: #e5e5e5; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+
+      #app { position: fixed; inset: 0; overflow: hidden; }
+
+      .hud { position: fixed; top: 12px; left: 12px; padding: 8px 10px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; backdrop-filter: blur(6px); }
+
+      .hud b { color: #7bd88f; }
+
+      a { color: #7bd88f; text-decoration: none; }
+
+      a:hover { text-decoration: underline; }
+
+      /* Crosshair */
+
+      .crosshair {
+
+        position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+
+        width: 22px; height: 22px; pointer-events: none; z-index: 10; opacity: 0.9;
+
+      }
+
+      .crosshair:before, .crosshair:after {
+
+        content: ""; position: absolute; background: #ffff66; box-shadow: 0 0 2px rgba(255,255,102,0.8);
+
+      }
+
+      .crosshair:before { /* vertical */
+
+        left: 50%; top: 0; width: 2px; height: 100%; transform: translateX(-50%);
+
+      }
+
+      .crosshair:after { /* horizontal */
+
+        top: 50%; left: 0; width: 100%; height: 2px; transform: translateY(-50%);
+
+      }
+
+      #settings-menu {
+
+        position: fixed;
+
+        top: 50%;
+
+        left: 50%;
+
+        transform: translate(-50%, -50%);
+
+        background: rgba(0, 0, 0, 0.7);
+
+        padding: 20px;
+
+        border-radius: 10px;
+
+        z-index: 100;
+
+        display: none;
+
+        color: white;
+
+        text-align: center;
+
+      }
+
+      #settings-menu label {
+
+        display: block;
+
+        margin-bottom: 10px;
+
+      }
+
+      .keybind-button {
+
+        width: 100px;
+
+        padding: 5px;
+
+        margin: 5px;
+
+        background: #333;
+
+        border: 1px solid #555;
+
+        color: white;
+
+        cursor: pointer;
+
+      }
+
+      .keybind-button:hover {
+
+        background: #555;
+
+      }
+
+    </style>
+
+  </head>
+
+  <body>
+
+    <div id="app"></div>
+
+    <div class="crosshair" aria-hidden="true"></div>
+
+    <div id="settings-menu">
+
+      <label for="sensitivity-slider">Чувствительность мыши</label>
+
+      <input type="range" id="sensitivity-slider" min="0.0005" max="0.005" step="0.0001" value="0.0025">
+
+      <div id="keybindings">
+
+        <h3>Управление</h3>
+
+        <div><label>Вперед:</label><button id="bind-forward" class="keybind-button"></button></div>
+
+        <div><label>Назад:</label><button id="bind-backward" class="keybind-button"></button></div>
+
+        <div><label>Влево:</label><button id="bind-left" class="keybind-button"></button></div>
+
+        <div><label>Вправо:</label><button id="bind-right" class="keybind-button"></button></div>
+
+        <div><label>Прыжок:</label><button id="bind-jump" class="keybind-button"></button></div>
+
+        <div><label>Бег:</label><button id="bind-sprint" class="keybind-button"></button></div>
+
+        <div><label>Присесть:</label><button id="bind-sneak" class="keybind-button"></button></div>
+
+      </div>
+
+    </div>
+
+    <div class="hud">
+
+      <div><b>Управление</b>: ЛКМ — вращение, Колесо — зум</div>
+
+      <div>Сцена: 8×8×4 кубов</div>
+
+    </div>
+
+
+
+    <!-- Сначала пробуем локальную three.js, затем CDN (r149 UMD) -->
+
+    <script src="./vendor/three.min.js"></script>
+    <!-- <script src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script> -->
+
+    <script src="./js/main.js"></script>
+
+  </body>
+
+</html>
