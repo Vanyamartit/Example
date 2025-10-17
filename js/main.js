@@ -354,6 +354,7 @@ async function boot() {
       this.mesh = new THREE.Group();
       this.simpleMesh = null;
       this.detailed = false;
+      this.boundingBox = new THREE.Box3(this.position, this.position.clone().addScalar(this.size));
     }
 
     addVoxel(x, y, z) {
@@ -361,8 +362,7 @@ async function boot() {
     }
 
     buildMeshes() {
-      // Dispose old meshes and clear the group
-      this.mesh.children.forEach(mesh => mesh.geometry.dispose());
+      this.mesh.children.forEach(mesh => mesh.geometry.dispose()); // Dispose old detailed geometry
       this.mesh.clear();
   
       // Create a separate geometry for textured materials that includes UVs
@@ -408,6 +408,12 @@ async function boot() {
 
         this.mesh.add(mesh);
       });
+
+      // Simple mesh (low detail)
+      const simpleGeo = new THREE.BoxGeometry(this.size, this.size, this.size);
+      const simpleMat = new THREE.MeshLambertMaterial({ color: 0x88cc88, wireframe: true, transparent: true, opacity: 0.3 });
+      this.simpleMesh = new THREE.Mesh(simpleGeo, simpleMat);
+      this.simpleMesh.position.set(this.position.x + this.size / 2, this.position.y + this.size / 2, this.position.z + this.size / 2);
     }
   }
 
@@ -597,10 +603,15 @@ async function boot() {
 
     const rebuildChunk = (chunk) => {
         if (chunk) {
-            if (chunk.mesh) scene.remove(chunk.mesh); // Remove old mesh
+            if (chunk.mesh) scene.remove(chunk.mesh);
+            if (chunk.simpleMesh) scene.remove(chunk.simpleMesh);
             chunk.buildMeshes(); // Rebuild with correct culling
-            // If the chunk was detailed, add its new mesh back to the scene
-            if (chunk.detailed) scene.add(chunk.mesh);
+            // Add the correct mesh back to the scene based on its current detail state
+            if (chunk.detailed) {
+                scene.add(chunk.mesh);
+            } else {
+                scene.add(chunk.simpleMesh);
+            }
         }
     };
 
@@ -772,6 +783,9 @@ async function boot() {
   const chunkViewDistance = Math.ceil(farDistance / CHUNK_SIZE);
   const activeChunks = new Set();
 
+  // Frustum for culling
+  const frustum = new THREE.Frustum();
+
   function updateChunks(playerPosition) {
     const px = Math.floor(playerPosition.x / CHUNK_SIZE);
     const py = Math.floor(playerPosition.y / CHUNK_SIZE);
@@ -779,6 +793,9 @@ async function boot() {
     const newActiveChunks = new Set();
 
     const verticalChunkViewDistance = 2; // How many chunks to load up/down
+
+    frustum.setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+
 
     for (let x = px - chunkViewDistance; x <= px + chunkViewDistance; x++) {
       for (let y = py - verticalChunkViewDistance; y <= py + verticalChunkViewDistance; y++) {
@@ -795,17 +812,27 @@ async function boot() {
 
           const chunkCenter = chunk.position.clone().add(new THREE.Vector3(chunk.size / 2, chunk.size / 2, chunk.size / 2));
           const distance = playerPosition.distanceTo(chunkCenter);
+          const isInFrustum = frustum.intersectsBox(chunk.boundingBox);
  
-          if (distance < nearDistance) {
-            if (!chunk.detailed) { // If not detailed, add the detailed mesh
+          if (distance < nearDistance && isInFrustum) {
+            // Show detailed mesh
+            if (!chunk.detailed) {
+              scene.remove(chunk.simpleMesh);
               scene.add(chunk.mesh);
               chunk.detailed = true;
             }
-          } else { // distance >= nearDistance (or farDistance, since simpleMesh is removed)
-             if (chunk.detailed) { // If detailed, remove it
+          } else if (distance < farDistance) {
+            // Show simple mesh
+            if (chunk.detailed) {
               scene.remove(chunk.mesh);
               chunk.detailed = false;
-             }
+            }
+            if (!chunk.simpleMesh.parent) scene.add(chunk.simpleMesh);
+          } else {
+            // Hide both
+            if (chunk.mesh.parent) scene.remove(chunk.mesh);
+            if (chunk.simpleMesh.parent) scene.remove(chunk.simpleMesh);
+            chunk.detailed = false;
           }
         }
       }
@@ -815,6 +842,7 @@ async function boot() {
         if (!newActiveChunks.has(key)) {
             const chunk = chunks.get(key);
             if (chunk) {
+                scene.remove(chunk.simpleMesh);
                 scene.remove(chunk.mesh);
                 chunk.detailed = false;
             }
