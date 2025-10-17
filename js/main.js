@@ -15,7 +15,7 @@ const COLORS = {
 
 const CUBE_FACES = [
   { // right
-    uv: [0, 1, 1, 1, 0, 0, 1, 0], // u,v for each corner
+    uv: [0, 1, 1, 1, 0, 0, 1, 0],
     corners: [{ pos: [1, 1, 1], norm: [1, 0, 0] }, { pos: [1, 1, 0], norm: [1, 0, 0] }, { pos: [1, 0, 1], norm: [1, 0, 0] }, { pos: [1, 0, 0], norm: [1, 0, 0] }],
     dir: [1, 0, 0],
   },
@@ -25,12 +25,12 @@ const CUBE_FACES = [
     dir: [-1, 0, 0],
   },
   { // top
-    uv: [0, 1, 1, 1, 0, 0, 1, 0],
+    uv: [0, 1, 1, 1, 0, 0, 1, 0], // Standard UV for top face
     corners: [{ pos: [0, 1, 1], norm: [0, 1, 0] }, { pos: [1, 1, 1], norm: [0, 1, 0] }, { pos: [0, 1, 0], norm: [0, 1, 0] }, { pos: [1, 1, 0], norm: [0, 1, 0] }],
     dir: [0, 1, 0],
   },
   { // bottom
-    uv: [0, 0, 1, 0, 0, 1, 1, 1],
+    uv: [0, 0, 1, 0, 0, 1, 1, 1], // Standard UV for bottom face
     corners: [{ pos: [0, 0, 0], norm: [0, -1, 0] }, { pos: [1, 0, 0], norm: [0, -1, 0] }, { pos: [0, 0, 1], norm: [0, -1, 0] }, { pos: [1, 0, 1], norm: [0, -1, 0] }],
     dir: [0, -1, 0],
   },
@@ -352,6 +352,7 @@ async function boot() {
       this.size = size;
       this.voxels = new Set();
       this.mesh = new THREE.Group();
+      this.simpleMesh = null;
       this.detailed = false;
     }
 
@@ -364,71 +365,47 @@ async function boot() {
       this.mesh.children.forEach(mesh => mesh.geometry.dispose());
       this.mesh.clear();
   
-      const geometries = new Map();
+      // Create a separate geometry for textured materials that includes UVs
+      const texturedGeometry = new THREE.BoxGeometry(1, 1, 1);
+
+      const voxelsByMaterial = new Map();
   
+      // Group voxels by material
       this.voxels.forEach(k => {
-        const [vx, vy, vz] = k.split(',').map(Number);
-        const blockType = voxelColors.get(k);
-  
-        for (const { dir, corners, uv } of CUBE_FACES) {
-          const neighbor = keyOf(vx + dir[0], vy + dir[1], vz + dir[2]);
-          if (!voxels.has(neighbor)) {
-            let material;
-            // Special handling for grass block
-            if (blockType === 'grass') {
-              if (dir[1] === 1) { // top face
-                material = COLORS.grass_top;
-              } else if (dir[1] === -1) { // bottom face
-                material = COLORS.dirt;
-              } else { // side faces
-                material = COLORS.grass_side;
-              }
-            } else {
-              // Default material logic
-              material = blockType || COLORS.stone;
-            }
-
-            if (!geometries.has(material)) {
-              geometries.set(material, {
-                positions: [],
-                normals: [],
-                uvs: [],
-                indices: [],
-              });
-            }
-
-            const data = geometries.get(material);
-            const ndx = data.positions.length / 3;
-
-            for (const { pos, norm } of corners) {
-              data.positions.push(pos[0] + vx, pos[1] + vy, pos[2] + vz);
-              data.normals.push(norm[0], norm[1], norm[2]);
-            }
-            data.uvs.push(...uv);
-            data.indices.push(ndx, ndx + 1, ndx + 2, ndx + 2, ndx + 1, ndx + 3);
-          }
+        const material = voxelColors.get(k) || COLORS.stone;
+        if (!voxelsByMaterial.has(material)) {
+          voxelsByMaterial.set(material, []);
         }
+        voxelsByMaterial.get(material).push(k);
       });
   
-      geometries.forEach((data, material) => {
-        if (data.indices.length === 0) return;
-  
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(data.positions), 3));
-        geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(data.normals), 3));
-        geometry.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(data.uvs), 2));
-        geometry.setIndex(data.indices);
-  
+      voxelsByMaterial.forEach((voxelList, material) => {
         let meshMaterial;
-        if (material instanceof THREE.Material) {
+        let meshGeometry = texturedGeometry; // Use geometry with UVs for all
+  
+        if (material === 'grass') {
+          meshMaterial = COLORS.grass_side; // Use side material for the whole grass block
+        } else if (material instanceof THREE.Material) {
           meshMaterial = material;
         } else {
           meshMaterial = new THREE.MeshStandardMaterial({ color: material, roughness: 0.9 });
         }
   
-        const mesh = new THREE.Mesh(geometry, meshMaterial);
+        const mesh = new THREE.InstancedMesh(meshGeometry, meshMaterial, voxelList.length);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
+
+        let i = 0;
+        voxelList.forEach(k => {
+          const [vx, vy, vz] = k.split(',').map(Number);
+          dummy.position.set(centerFromVoxel(vx), centerFromVoxel(vy), centerFromVoxel(vz));
+          dummy.updateMatrix();
+          mesh.setMatrixAt(i, dummy.matrix);
+          i++;
+        });
+        
+        mesh.instanceMatrix.needsUpdate = true;
+
         this.mesh.add(mesh);
       });
     }
@@ -620,9 +597,10 @@ async function boot() {
 
     const rebuildChunk = (chunk) => {
         if (chunk) {
-            scene.remove(chunk.mesh);
+            if (chunk.mesh) scene.remove(chunk.mesh); // Remove old mesh
             chunk.buildMeshes(); // Rebuild with correct culling
-            scene.add(chunk.mesh);
+            // If the chunk was detailed, add its new mesh back to the scene
+            if (chunk.detailed) scene.add(chunk.mesh);
         }
     };
 
@@ -819,12 +797,12 @@ async function boot() {
           const distance = playerPosition.distanceTo(chunkCenter);
  
           if (distance < nearDistance) {
-            if (!chunk.detailed) {
+            if (!chunk.detailed) { // If not detailed, add the detailed mesh
               scene.add(chunk.mesh);
               chunk.detailed = true;
             }
-          } else if (distance > farDistance) { // Use farDistance for unloading
-             if (chunk.detailed) {
+          } else { // distance >= nearDistance (or farDistance, since simpleMesh is removed)
+             if (chunk.detailed) { // If detailed, remove it
               scene.remove(chunk.mesh);
               chunk.detailed = false;
              }
