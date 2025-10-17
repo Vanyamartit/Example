@@ -7,7 +7,7 @@ const COLORS = {
   grass_top: null,
   grass_side: null,
   // We can reuse the dirt material for the bottom
-  dirt: null, // Placeholder for dirt material
+  dirt: null,
 
   stone: null // Placeholder for stone material
 
@@ -217,17 +217,31 @@ async function boot() {
   };
 
   // Wait for all textures to load before proceeding
-  const [dirtTexture, stoneTexture, grassTopTexture, grassSideTexture] = await Promise.all([
+  const [dirtTexture, stoneTexture, grassTopTexture, grassSideTexture, waterTexture] = await Promise.all([
     loadTexture('assets/textures/Dirt.png').catch(e => console.error("Failed to load dirt texture", e)),
     loadTexture('assets/textures/stone.png').catch(e => console.error("Failed to load stone texture", e)),
     loadTexture('assets/textures/Grass_block_on_top.png').catch(e => console.error("Failed to load grass_top texture", e)),
     loadTexture('assets/textures/Grass_block.png').catch(e => console.error("Failed to load grass_side texture", e)),
+    loadTexture('assets/textures/water.png').catch(e => console.error("Failed to load water texture", e)),
   ]);
 
   COLORS.dirt = new THREE.MeshStandardMaterial({ map: dirtTexture, roughness: 0.9 });
   COLORS.stone = new THREE.MeshStandardMaterial({ map: stoneTexture, roughness: 0.9 });
   COLORS.grass_top = new THREE.MeshStandardMaterial({ map: grassTopTexture, roughness: 0.9 });
   COLORS.grass_side = new THREE.MeshStandardMaterial({ map: grassSideTexture, roughness: 0.9 });
+  COLORS.water = new THREE.MeshPhysicalMaterial({
+    transmission: 0.9,
+    roughness: 0.1,
+    transparent: true,
+    depthWrite: false, // Important for transparency
+  });
+
+  if (waterTexture) {
+    COLORS.water.map = waterTexture;
+  } else {
+    // Fallback if texture fails to load
+    COLORS.water.color = new THREE.Color(0x1e90ff);
+  }
 
   // Ensure THREE exists (use only local file)
   if (!window.THREE) {
@@ -293,16 +307,28 @@ async function boot() {
 
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Space') {
-      if (onGround) {
-        pVelY = jumpSpeed;
-        onGround = false;
+      // Ignore keydown events that are repeats (key being held down)
+      if (!e.repeat) {
+        const now = performance.now();
+        if (now - lastSpacePress < 300) { // Double-tap Space
+          flightMode = !flightMode;
+          pVelY = 0; // Reset vertical velocity
+          lastSpacePress = 0; // Prevent triple-tap from re-triggering
+        } else {
+          if (onGround) {
+            pVelY = jumpSpeed;
+            onGround = false;
+          }
+        }
+        lastSpacePress = now;
       }
-      const now = performance.now();
-      if (now - lastSpacePress < 300) { // Double-tap Space
-        flightMode = !flightMode;
-        pVelY = 0; // Reset vertical velocity
+    }
+
+    if (e.code.startsWith('Digit')) {
+      const digit = parseInt(e.code.slice(5));
+      if (digit >= 1 && digit <= 9) {
+        setSelectedHotbarSlot(digit - 1);
       }
-      lastSpacePress = now;
     }
     keys.add(e.code);
   });
@@ -419,6 +445,7 @@ async function boot() {
 
   // Ensure voxels is defined
   const voxels = new Set();
+  const waterVoxels = new Set();
 
   // Ensure voxelColors is defined
   const voxelColors = new Map();
@@ -435,6 +462,7 @@ async function boot() {
   const TERRAIN_SCALE = 0.05;
   const CAVE_SCALE = 0.1;
   const CAVE_THRESHOLD = 0.6;
+  const WATER_LEVEL = 2;
 
   function generateChunk(cx, cy, cz) {
     const chunkKey = keyOf(cx, cy, cz);
@@ -462,6 +490,14 @@ async function boot() {
             voxels.add(key);
             const color = worldY === height ? 'grass' : worldY > height - 3 ? COLORS.dirt : COLORS.stone;
             voxelColors.set(key, color);
+            chunk.addVoxel(worldX, worldY, worldZ);
+          } else if (worldY <= WATER_LEVEL) {
+            // Fill with water if below water level and no terrain
+            const key = keyOf(worldX, worldY, worldZ);
+            // Add to both voxels (for rendering) and waterVoxels (for physics)
+            voxels.add(key); 
+            waterVoxels.add(key);
+            voxelColors.set(key, COLORS.water);
             chunk.addVoxel(worldX, worldY, worldZ);
           }
         }
@@ -531,14 +567,7 @@ async function boot() {
 
   // Adjust collision handling to prevent getting stuck
   function clampToWorld() {
-    player.position.y = Math.max(WORLD.minY, Math.min(WORLD.maxY, player.position.y));
-
-    // Ensure player doesn't get stuck in the ground
-    if (player.position.y <= WORLD.minY) {
-      player.position.y = WORLD.minY;
-      pVelY = 0; // Reset vertical velocity
-      onGround = true;
-    }
+    player.position.y = Math.min(WORLD.maxY, player.position.y); // Only clamp max Y
   }
 
   // This is no longer needed as geometry is created dynamically in buildMeshes
@@ -618,10 +647,13 @@ async function boot() {
     if (e.button === 0) { // Destroy block
       const kDel = keyOf(res.voxel.x, res.voxel.y, res.voxel.z);
       if (voxels.delete(kDel)) {
+        waterVoxels.delete(kDel); // Also remove from water set if it exists there
+        const blockType = voxelColors.get(kDel);
         voxelColors.delete(kDel);
         const chunk = getChunkForVoxel(res.voxel.x, res.voxel.y, res.voxel.z);
         if (chunk) {
             chunk.voxels.delete(kDel);
+            addToInventory(blockType);
             rebuildChunk(chunk);
         }
       }
@@ -632,8 +664,16 @@ async function boot() {
       const vminX = nx - 0.5, vmaxX = nx + 0.5, vminY = ny - 0.5, vmaxY = ny + 0.5, vminZ = nz - 0.5, vmaxZ = nz + 0.5;
       const overlap = (minA, maxA, minB, maxB) => (maxA > minB) && (minA < maxB);
       if (!voxels.has(k) && !(overlap(aabb.minX, aabb.maxX, vminX, vmaxX) && overlap(aabb.minY, aabb.maxY, vminY, vmaxY) && overlap(aabb.minZ, aabb.maxZ, vminZ, vmaxZ))) {
+        const hotbarItem = inventory[selectedHotbarSlot];
+        if (!hotbarItem || hotbarItem.count === 0) return; // Can't place if slot is empty
+
         voxels.add(k);
-        voxelColors.set(k, COLORS.stone);
+        if (hotbarItem.type === COLORS.water) {
+          waterVoxels.add(k);
+        }
+        voxelColors.set(k, hotbarItem.type);
+        hotbarItem.count--;
+        if (hotbarItem.count === 0) inventory[selectedHotbarSlot] = null;
         let chunk = getChunkForVoxel(nx, ny, nz);
         if (!chunk) {
             const cx = Math.floor(nx / CHUNK_SIZE) * CHUNK_SIZE;
@@ -688,7 +728,7 @@ async function boot() {
       for (let iy = start; isDown ? iy >= end : iy <= end; isDown ? iy-- : iy++) {
           for (let ix = spanX.min; ix <= spanX.max; ix++) {
             for (let iz = spanZ.min; iz <= spanZ.max; iz++) {
-              if (voxels.has(keyOf(ix, iy, iz))) {
+              if (voxels.has(keyOf(ix, iy, iz)) && !waterVoxels.has(keyOf(ix, iy, iz))) {
               const surface = iy + (isDown ? 1 : 0);
               const penetration = isDown ? surface - a.minY : surface - a.maxY;
               player.position.y += penetration + (isDown ? eps : -eps);
@@ -710,7 +750,7 @@ async function boot() {
         for (let ix = start; isNeg ? ix >= end : ix <= end; isNeg ? ix-- : ix++) {
             for (let iy = spanY.min; iy <= spanY.max; iy++) {
                 for (let iz = spanZ.min; iz <= spanZ.max; iz++) {
-                    if (voxels.has(keyOf(ix, iy, iz))) { // If there's a voxel in the way
+                    if (voxels.has(keyOf(ix, iy, iz)) && !waterVoxels.has(keyOf(ix, iy, iz))) { // If there's a voxel in the way
                         const surface = ix + (isNeg ? 1 : 0);
                         const penetration = surface - (isNeg ? a.minX : a.maxX);
                         player.position.x += penetration + (isNeg ? eps : -eps);
@@ -731,7 +771,7 @@ async function boot() {
         for (let iz = start; isNeg ? iz >= end : iz <= end; isNeg ? iz-- : iz++) {
             for (let ix = spanX.min; ix <= spanX.max; ix++) {
                 for (let iy = spanY.min; iy <= spanY.max; iy++) {
-                    if (voxels.has(keyOf(ix, iy, iz))) { // If there's a voxel in the way
+                    if (voxels.has(keyOf(ix, iy, iz)) && !waterVoxels.has(keyOf(ix, iy, iz))) { // If there's a voxel in the way
                         const surface = iz + (isNeg ? 1 : 0);
                         const penetration = surface - (isNeg ? a.minZ : a.maxZ);
                         player.position.z += penetration + (isNeg ? eps : -eps);
@@ -853,6 +893,130 @@ async function boot() {
     newActiveChunks.forEach(key => activeChunks.add(key));
   }
 
+  // --- Inventory ---
+  const inventory = new Array(36).fill(null);
+  let selectedHotbarSlot = 0;
+  let inventoryOpen = false;
+
+  const inventoryContainer = document.getElementById('inventory-container');
+  const inventoryGrid = document.getElementById('inventory-grid');
+  const hotbar = document.getElementById('hotbar');
+
+  function initializeInventoryUI() {
+    for (let i = 0; i < 36; i++) {
+      const slot = document.createElement('div');
+      slot.classList.add('inventory-slot');
+      slot.dataset.slotIndex = i;
+      inventoryGrid.appendChild(slot);
+
+      if (i < 9) {
+        const hotbarSlot = document.createElement('div');
+        hotbarSlot.classList.add('inventory-slot');
+        hotbarSlot.dataset.slotIndex = i;
+        hotbar.appendChild(hotbarSlot);
+      }
+    }
+    updateInventoryUI();
+  }
+
+  function getMaterialIcon(material) {
+    if (material === 'grass') return COLORS.grass_side.map.image.src;
+    if (material instanceof THREE.Material && material.map) return material.map.image.src;
+    return ''; // No icon for colors
+  }
+
+  function updateInventoryUI() {
+    for (let i = 0; i < 36; i++) {
+      const item = inventory[i];
+      const slot = inventoryGrid.querySelector(`[data-slot-index='${i}']`);
+      
+      let hotbarSlot = null;
+      if (i < 9) {
+        hotbarSlot = hotbar.querySelector(`[data-slot-index='${i}']`);
+      }
+
+      const updateSlot = (slotElement) => {
+        if (!slotElement) return;
+        slotElement.innerHTML = '';
+        if (item) {
+          const iconUrl = getMaterialIcon(item.type);
+          slotElement.style.backgroundImage = `url(${iconUrl})`;
+          slotElement.style.backgroundSize = 'contain';
+          if (item.count > 1) {
+            slotElement.textContent = item.count;
+          }
+        } else {
+          slotElement.style.backgroundImage = 'none';
+        }
+      };
+
+      updateSlot(slot);
+      updateSlot(hotbarSlot);
+
+      if (hotbarSlot) {
+        if (i === selectedHotbarSlot) {
+          hotbarSlot.classList.add('selected');
+        } else {
+          hotbarSlot.classList.remove('selected');
+        }
+      }
+    }
+  }
+
+  function setSelectedHotbarSlot(index) {
+    selectedHotbarSlot = index;
+    updateInventoryUI();
+  }
+
+  function toggleInventory() {
+    inventoryOpen = !inventoryOpen;
+    if (inventoryOpen) {
+      inventoryContainer.style.display = 'flex';
+      document.exitPointerLock();
+    } else {
+      inventoryContainer.style.display = 'none';
+      canvas.requestPointerLock().catch(err => console.error(err));
+    }
+  }
+
+  function addToInventory(blockType) {
+    // Try to stack with existing items first
+    for (let i = 0; i < inventory.length; i++) {
+      const item = inventory[i];
+      if (item && item.type === blockType && item.count < 64) {
+        item.count++;
+        updateInventoryUI();
+        return;
+      }
+    }
+    // Find an empty slot
+    for (let i = 0; i < inventory.length; i++) {
+      if (!inventory[i]) {
+        inventory[i] = { type: blockType, count: 1 };
+        updateInventoryUI();
+        return;
+      }
+    }
+    // Inventory is full
+    console.log("Inventory is full!");
+  }
+
+  // Initial setup
+  initializeInventoryUI();
+  // Give player some starting blocks
+  inventory[0] = { type: COLORS.stone, count: 64 };
+  inventory[1] = { type: COLORS.dirt, count: 64 };
+  inventory[2] = { type: 'grass', count: 64 };
+  inventory[3] = { type: COLORS.water, count: 64 };
+  updateInventoryUI();
+
+
+  function isPlayerInWater() {
+    const playerHeadPos = player.position.clone().add(new THREE.Vector3(0, eyeHeight - 0.2, 0));
+    const blockKey = keyOf(Math.round(playerHeadPos.x), Math.round(playerHeadPos.y), Math.round(playerHeadPos.z));
+    return waterVoxels.has(blockKey);
+  }
+
   function tick(now) {
     now = now || performance.now();
     if (!tick.last) tick.last = now;
@@ -879,12 +1043,14 @@ async function boot() {
     
     const isSneaking = keys.has('ShiftLeft') || keys.has('ShiftRight');
 
-    if (mode === 'player') {
+    const inWater = isPlayerInWater();
+
+    if (mode === 'player' && document.pointerLockElement === canvas) {
       const isSprinting = keys.has('ControlLeft') && keys.has('KeyW') && !isSneaking;
       const sprintSpeedMultiplier = 5.0 / pAccel;
 
       let currentAccel = isSneaking ? pAccel * 0.4 : pAccel;
-
+      if (inWater) currentAccel *= 0.6; // Slower in water
       if (isSprinting) currentAccel *= sprintSpeedMultiplier;
       
       const forward = new THREE.Vector3(-Math.sin(pyaw), 0, -Math.cos(pyaw));
@@ -907,12 +1073,16 @@ async function boot() {
         if (keys.has('ControlLeft') || keys.has('ControlRight')) pVelY = -currentAccel;
         
         moveAxis('x', pVelocity.x * deltaTime);
-        moveAxis('y', pVelY * deltaTime);
+        moveAxis('y', pVelY * deltaTime); // Flight has its own vertical movement
         moveAxis('z', pVelocity.z * deltaTime);
       } else {
         pVelocity.lerp(wishVel, pDamp * deltaTime);
-        pVelY -= gravity * deltaTime;
-        pVelY = Math.max(pVelY, TERMINAL_VELOCITY);
+        if (inWater) {
+          pVelY -= gravity * 0.2 * deltaTime; // Slower sinking in water
+        } else {
+          pVelY -= gravity * deltaTime;
+        }
+        pVelY = Math.max(pVelY, inWater ? -2 : TERMINAL_VELOCITY); // Slower terminal velocity in water
 
         moveAxis('x', pVelocity.x * deltaTime);
         moveAxis('y', pVelY * deltaTime);
