@@ -113,17 +113,194 @@
 
       }
 
+      /* Hotbar */
+      #hotbar {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        background: rgba(0, 0, 0, 0.5);
+        border: 2px solid #555;
+        border-radius: 5px;
+      }
+      .slot {
+        width: 50px;
+        height: 50px;
+        border: 2px solid #333;
+        margin: 2px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-size: contain;
+        background-repeat: no-repeat;
+        background-position: center;
+      }
+      .slot.selected {
+        border-color: #fff;
+        background-color: rgba(255, 255, 255, 0.2);
+      }
+
+      #main-menu, #world-settings {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(0, 0, 0, 0.75);
+        padding: 40px;
+        border-radius: 15px;
+        text-align: center;
+        z-index: 100;
+        border: 2px solid #555;
+      }
+
+      #main-menu h1 {
+        color: #fff;
+        font-size: 3em;
+        margin-bottom: 20px;
+      }
+
+      #main-menu button, #world-settings button {
+        background-color: #4CAF50;
+        color: white;
+        padding: 15px 32px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 16px;
+        margin: 4px 2px;
+        cursor: pointer;
+        border: none;
+        border-radius: 8px;
+        width: 250px;
+      }
+
+      #world-settings h2 {
+        color: #fff;
+        margin-bottom: 30px;
+      }
+
+      #world-settings .setting {
+        margin-bottom: 20px;
+        text-align: left;
+      }
+
+      #world-settings label {
+        display: block;
+        margin-bottom: 10px;
+        color: #ddd;
+        font-size: 1.1em;
+      }
+
+      #world-settings .options {
+        display: flex;
+        justify-content: center;
+      }
+
+      #world-settings .option-btn {
+        background-color: #333;
+        border: 1px solid #555;
+        width: 120px;
+        margin: 0 5px;
+      }
+
+      #world-settings .option-btn.selected {
+        background-color: #555;
+        border-color: #777;
+      }
+
+      #start-game-btn {
+        margin-top: 20px;
+      }
+
+      #crafting-container {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(0, 0, 0, 0.75);
+        padding: 20px;
+        border-radius: 15px;
+        display: none;
+        align-items: center;
+        z-index: 100;
+        border: 2px solid #555;
+      }
+
+      #crafting-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 50px);
+        grid-gap: 5px;
+        margin-right: 20px;
+      }
+
+      .crafting-slot {
+        width: 50px;
+        height: 50px;
+        border: 2px solid #333;
+        background-size: contain;
+        background-repeat: no-repeat;
+        background-position: center;
+      }
+
     </style>
 
   </head>
 
   <body>
 
+    <div id="main-menu">
+      <h1>Minecraft</h1>
+      <button id="create-world-btn">Создать мир</button>
+    </div>
+
+    <div id="world-settings" style="display: none;">
+      <h2>Настройки мира</h2>
+      <div class="setting">
+        <label>Тип мира:</label>
+        <div class="options">
+          <button id="world-type-default" class="option-btn selected">Обычный</button>
+          <button id="world-type-flat" class="option-btn">Плоский</button>
+        </div>
+      </div>
+      <div class="setting">
+        <label>Режим игры:</label>
+        <div class="options">
+          <button id="gamemode-survival" class="option-btn selected">Выживание</button>
+          <button id="gamemode-creative" class="option-btn">Креатив</button>
+        </div>
+      </div>
+      <button id="start-game-btn">Начать игру</button>
+    </div>
+
     <div id="app"></div>
     <div id="inventory-container">
       <div id="inventory-grid"></div>
     </div>
-    <div id="hotbar"></div>
+    <div id="hotbar">
+        <div class="slot" id="slot-1"></div>
+        <div class="slot" id="slot-2"></div>
+        <div class="slot" id="slot-3"></div>
+        <div class="slot" id="slot-4"></div>
+        <div class="slot" id="slot-5"></div>
+    </div>
+
+    <div id="crafting-container">
+      <div id="crafting-grid">
+        <div class="crafting-slot"></div>
+        <div class="crafting-slot"></div>
+        <div class="crafting-slot"></div>
+        <div class="crafting-slot"></div>
+        <div class="crafting-slot"></div>
+        <div class="crafting-slot"></div>
+        <div class="crafting-slot"></div>
+        <div class="crafting-slot"></div>
+        <div class="crafting-slot"></div>
+      </div>
+      <div id="crafting-output">
+        <div class="crafting-slot"></div>
+      </div>
+    </div>
 
     <div class="crosshair" aria-hidden="true"></div>
 
@@ -165,12 +342,10 @@
 
 
 
-    <!-- Сначала пробуем локальную three.js, затем CDN (r149 UMD) -->
-
     <script src="./vendor/three.min.js"></script>
-    <!-- <script src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script> -->
 
-    <script src="./js/main.js"></script>
+    <script src="./js/recipes.js"></script>
+    <script type="module" src="./js/main.js"></script>
 
   </body>
 
