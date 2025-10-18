@@ -1,13 +1,23 @@
 const craftingContainer = document.getElementById('crafting-container');
 
 export function showCraftingUI() {
-  craftingContainer.style.display = 'flex';
+  // Crafting is disabled
 }
 
 export function hideCraftingUI() {
-  craftingContainer.style.display = 'none';
+  if (craftingContainer) {
+    craftingContainer.style.display = 'none';
+  }
+}
+
+export function getCraftingGrid() {
+  return [];
+}
+
+export function setCraftingOutput(item) {
+  // Crafting is disabled
 }
 
 export function checkCrafting() {
-  // TODO: Implement crafting logic
+  // Crafting is disabled
 }

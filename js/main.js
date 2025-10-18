@@ -2,6 +2,7 @@
 import SimplexNoise from './lib/simplex-noise.js';
 import { COLORS, CUBE_FACES } from './config.js';
 import { initMainMenu } from './ui/menu.js';
+import { showCraftingUI, hideCraftingUI } from './crafting.js';
 
 
 // Simple script loader with multi-source fallback
@@ -134,11 +135,23 @@ async function runGame(gameMode, worldType) {
     `;
     document.head.appendChild(style);
 
+    const blockData = {
+      grass: { hardness: 1, tool: 'hand' },
+      dirt: { hardness: 1, tool: 'hand' },
+      stone: { hardness: Infinity, tool: 'pickaxe' },
+      oak_log: { hardness: 3, tool: 'axe' },
+      oak_planks: { hardness: 2, tool: 'axe' },
+      crafting_table: { hardness: 2, tool: 'axe' },
+      oak_leaves: { hardness: 0.2, tool: 'hand' },
+    };
+
     const blockTypes = {
-      dirt: { material: COLORS.dirt, icon: 'assets/textures/Dirt.png' },
-      stone: { material: COLORS.stone, icon: 'assets/textures/stone.png' },
-      oak_log: { material: COLORS.oak_log, icon: 'assets/textures/Oak_Log.png' },
-      oak_planks: { material: COLORS.oak_planks, icon: 'assets/textures/Oak_Planks.png' },
+      grass: { material: COLORS.grass, icon: 'assets/textures/Grass_block_on_top.png', data: blockData.grass },
+      dirt: { material: COLORS.dirt, icon: 'assets/textures/Dirt.png', data: blockData.dirt },
+      stone: { material: COLORS.stone, icon: 'assets/textures/stone.png', data: blockData.stone },
+      oak_log: { material: COLORS.oak_log, icon: 'assets/textures/Oak_Log.png', data: blockData.oak_log },
+      oak_planks: { material: COLORS.oak_planks, icon: 'assets/textures/Oak_Planks.png', data: blockData.oak_planks },
+      crafting_table: { material: COLORS.oak_planks, icon: 'assets/textures/Oak_Planks.png', data: blockData.crafting_table },
     };
 
     if (gameMode === 'creative') {
@@ -147,7 +160,7 @@ async function runGame(gameMode, worldType) {
         { ...blockTypes.dirt, count: Infinity },
         { ...blockTypes.oak_log, count: Infinity },
         { ...blockTypes.oak_planks, count: Infinity },
-        null
+        { ...blockTypes.crafting_table, count: Infinity }
       ];
     } else {
       hotbarItems = [null, null, null, null, null];
@@ -163,6 +176,7 @@ async function runGame(gameMode, worldType) {
     const app = document.getElementById('app');
     const settingsMenu = document.getElementById('settings-menu');
     const sensitivitySlider = document.getElementById('sensitivity-slider');
+    const craftingContainer = document.getElementById('crafting-container');
 
     // Renderer
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
@@ -290,6 +304,25 @@ async function runGame(gameMode, worldType) {
           }
         }
       }
+      if (e.code === 'KeyE') {
+        if (craftingContainer.style.display === 'none') {
+          showCraftingUI();
+          document.exitPointerLock();
+          mode = 'menu';
+        } else {
+          hideCraftingUI();
+          mode = 'player';
+          if (!pointerLockPending) {
+            pointerLockPending = true;
+            canvas.requestPointerLock({
+              unadjustedMovement: true,
+            }).catch((err) => {
+              console.error('Pointer lock failed:', err);
+              pointerLockPending = false;
+            });
+          }
+        }
+      }
       if (e.code === keys.jump) {
         if (e.repeat) return; // Use the .repeat property to ignore OS key repeats
 
@@ -339,12 +372,20 @@ async function runGame(gameMode, worldType) {
       }
     });
 
+    let breakingBlock = null;
+    let breakingStartTime = 0;
+    let breakingDuration = 0;
+
     canvas.addEventListener('mousedown', (e) => {
-      pressedMouseButtons.add(e.button);
+      if (mode === 'player' && document.pointerLockElement === canvas) {
+        handleBlockInteraction(e.button, 'down');
+      }
     });
 
     canvas.addEventListener('mouseup', (e) => {
-      pressedMouseButtons.delete(e.button);
+      if (mode === 'player' && document.pointerLockElement === canvas) {
+        handleBlockInteraction(e.button, 'up');
+      }
     });
 
     document.addEventListener('pointerlockchange', () => {
@@ -354,6 +395,7 @@ async function runGame(gameMode, worldType) {
       } else {
         mode = 'menu'; // Switch to menu mode or handle appropriately
         pointerLockPending = false;
+        handleBlockInteraction(0, 'up'); // Cancel breaking
       }
     });
 
@@ -635,83 +677,63 @@ async function runGame(gameMode, worldType) {
       return null;
     }
 
-    function handleBlockInteraction(button) {
-      if (mode !== 'player' || document.pointerLockElement !== canvas) return;
-      const rayOrigin = player.position.clone().add(new THREE.Vector3(0, eyeHeight, 0));
-      const rayDirection = new THREE.Vector3();
-      camera.getWorldDirection(rayDirection);
-      const res = voxelRaycast(rayOrigin, rayDirection, 6);
-      if (!res) return;
+    function handleBlockInteraction(button, action) {
+      if (mode !== 'player' || (document.pointerLockElement !== canvas && action !== 'up')) return;
 
-      console.log(`Game mode: ${gameMode}`); // DEBUG
+      if (button === 0) { // Left-click
+          if (action === 'down') {
+              const rayOrigin = player.position.clone().add(new THREE.Vector3(0, eyeHeight, 0));
+              const rayDirection = new THREE.Vector3();
+              camera.getWorldDirection(rayDirection);
+              const res = voxelRaycast(rayOrigin, rayDirection, 6);
+              if (!res) return;
 
-      const getChunkForVoxel = (vx, vy, vz) => {
-          const cx = Math.floor(vx / CHUNK_SIZE) * CHUNK_SIZE;
-          const cy = Math.floor(vy / CHUNK_SIZE) * CHUNK_SIZE;
-          const cz = Math.floor(vz / CHUNK_SIZE) * CHUNK_SIZE;
-          const chunkKey = keyOf(cx, cy, cz);
-          return chunks.get(chunkKey);
-      };
-
-      const rebuildChunk = (chunk) => {
-          if (chunk) {
-              if (chunk.mesh) scene.remove(chunk.mesh);
-              if (chunk.simpleMesh) scene.remove(chunk.simpleMesh);
-              chunk.buildMeshes(); // Rebuild with correct culling
-              // Add the correct mesh back to the scene based on its current detail state
-              if (chunk.detailed) {
-                  scene.add(chunk.mesh);
-              } else {
-                  scene.add(chunk.simpleMesh);
+              if (gameMode === 'creative') {
+                  destroyBlock(res.voxel);
+                  return;
               }
-          }
-      };
 
-      if (button === 0) { // Destroy block
-        const kDel = keyOf(res.voxel.x, res.voxel.y, res.voxel.z);
-        if (voxels.delete(kDel)) {
-          const material = voxelColors.get(kDel);
-          voxelColors.delete(kDel);
-          const chunk = getChunkForVoxel(res.voxel.x, res.voxel.y, res.voxel.z);
-          if (chunk) {
-              chunk.voxels.delete(kDel);
-              rebuildChunk(chunk);
-          }
-          if (gameMode === 'survival') {
-            let blockNameToAdd;
-            if (material === COLORS.grass) {
-              blockNameToAdd = 'dirt';
-            } else if (material === COLORS.oak_log) {
-              blockNameToAdd = 'oak_log';
-            } else if (material && material.name) {
-              blockNameToAdd = material.name;
-            }
+              // Survival mode logic
+              const k = keyOf(res.voxel.x, res.voxel.y, res.voxel.z);
+              const material = voxelColors.get(k);
+              const blockName = Object.keys(blockTypes).find(name => {
+                  const b = blockTypes[name];
+                  if (b.material === COLORS.grass) { // Special case for grass block string
+                    return material === COLORS.grass;
+                  }
+                  if (Array.isArray(b.material)) return b.material.includes(material);
+                  return b.material === material;
+              });
 
-            if (blockNameToAdd && blockTypes[blockNameToAdd]) {
-              const block = blockTypes[blockNameToAdd];
-              const existingItemIndex = hotbarItems.findIndex(item => item && item.material === block.material);
-              if (existingItemIndex > -1) {
-                hotbarItems[existingItemIndex].count++;
-              } else {
-                const emptySlotIndex = hotbarItems.findIndex(item => item === null);
-                if (emptySlotIndex > -1) {
-                  hotbarItems[emptySlotIndex] = { ...block, count: 1 };
-                }
+              if (!blockName || blockTypes[blockName].data.hardness === Infinity) {
+                  return; // Cannot break this block
               }
-              updateHotbarUI();
-            }
+
+              // Start breaking
+              breakingBlock = res.voxel;
+              breakingStartTime = performance.now();
+              breakingDuration = blockTypes[blockName].data.hardness * 1000;
+
+          } else if (action === 'up') {
+              // Cancel breaking
+              breakingBlock = null;
+              breakingStartTime = 0;
+              breakingDuration = 0;
           }
-        }
-      } else if (button === 2) { // Place block
+      }
+
+      if (button === 2 && action === 'down') { // Right-click for placing blocks
+        const rayOrigin = player.position.clone().add(new THREE.Vector3(0, eyeHeight, 0));
+        const rayDirection = new THREE.Vector3();
+        camera.getWorldDirection(rayDirection);
+        const res = voxelRaycast(rayOrigin, rayDirection, 6);
+        if (!res) return;
+
         const selectedItem = hotbarItems[selectedHotbarIndex];
-        console.log('Placing block. Selected item:', selectedItem); // DEBUG
         if (!selectedItem) return; // Don't place if slot is empty
 
-        if (gameMode === 'survival') {
-          console.log(`Survival mode place. Item count: ${selectedItem.count}`); // DEBUG
-          if (selectedItem.count === 0) {
-            return;
-          }
+        if (gameMode === 'survival' && selectedItem.count === 0) {
+          return;
         }
 
         const nx = res.voxel.x + res.normal.x, ny = res.voxel.y + res.normal.y, nz = res.voxel.z + res.normal.z;
@@ -736,7 +758,6 @@ async function runGame(gameMode, worldType) {
 
           if (gameMode === 'survival') {
             selectedItem.count--;
-            console.log(`New item count: ${selectedItem.count}`); // DEBUG
             if (selectedItem.count === 0) {
               hotbarItems[selectedHotbarIndex] = null;
             }
@@ -746,15 +767,180 @@ async function runGame(gameMode, worldType) {
       }
     }
 
-    canvas.addEventListener('mousedown', (e) => {
-      handleBlockInteraction(e.button);
-    });
+    function tick(now) {
+      now = now || performance.now();
+      if (!tick.last) {
+        tick.last = now;
+        updateChunks(player.position);
+        placeSpawnOnTop();
+      }
 
-    setInterval(() => {
-      pressedMouseButtons.forEach(button => {
-        handleBlockInteraction(button);
-      });
-    }, 200);
+      // Update chunks periodically
+      if (now - (tick.lastChunkUpdate || 0) > 500) {
+        updateChunks(player.position);
+        tick.lastChunkUpdate = now;
+      }
+
+      const dt = now - lastFrameTime;
+
+      if (dt < FRAME_DURATION) {
+        requestAnimationFrame(tick);
+        return;
+      }
+
+      lastFrameTime = now;
+
+      const deltaTime = Math.min(0.033, (now - tick.last) / 1000);
+      tick.last = now;
+
+      // Update day/night cycle
+      timeOfDay += deltaTime / dayDuration;
+      if (timeOfDay >= 1) timeOfDay -= 1;
+      updateDayNightCycle(timeOfDay);
+      
+      const isSneaking = pressedKeys.has(keys.sneak);
+
+      if (mode === 'player') {
+        const isSprinting = pressedKeys.has(keys.sprint) && pressedKeys.has(keys.forward) && !isSneaking;
+        const sprintSpeedMultiplier = 5.0 / pAccel;
+
+        let currentAccel = isSneaking ? pAccel * 0.4 : pAccel;
+
+        if (isSprinting) currentAccel *= sprintSpeedMultiplier;
+        
+        const forward = new THREE.Vector3(-Math.sin(pyaw), 0, -Math.cos(pyaw));
+        const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0));
+        let wish = new THREE.Vector3();
+
+        if (pressedKeys.has(keys.forward)) wish.add(forward);
+        if (pressedKeys.has(keys.backward)) wish.sub(forward);
+        if (pressedKeys.has(keys.left)) wish.sub(right);
+        if (pressedKeys.has(keys.right)) wish.add(right);
+
+        wish.normalize();
+
+        const wishVel = new THREE.Vector3(wish.x, 0, wish.z).multiplyScalar(currentAccel);
+
+        if (flightMode) {
+          pVelocity.lerp(wishVel, pDamp * deltaTime);
+          pVelY = 0;
+          if (pressedKeys.has(keys.jump)) pVelY = currentAccel;
+          if (pressedKeys.has(keys.sprint) || pressedKeys.has('ControlRight')) pVelY = -currentAccel;
+          
+          moveAxis('x', pVelocity.x * deltaTime);
+          moveAxis('y', pVelY * deltaTime);
+          moveAxis('z', pVelocity.z * deltaTime);
+        } else {
+          pVelocity.lerp(wishVel, pDamp * deltaTime);
+          pVelY -= gravity * deltaTime;
+          pVelY = Math.max(pVelY, TERMINAL_VELOCITY);
+
+          moveAxis('x', pVelocity.x * deltaTime);
+          moveAxis('y', pVelY * deltaTime);
+          moveAxis('z', pVelocity.z * deltaTime);
+        }
+
+        clampToWorld();
+
+        // Update camera to follow player
+        playerCube.position.y = playerHeight / 2; // Обновляем позицию куба игрока в соответствии с новой высотой
+        camera.position.copy(player.position);
+        camera.position.y += eyeHeight;
+        camera.rotation.order = 'YXZ';
+        camera.rotation.y = pyaw;
+        camera.rotation.x = ppitch;
+      }
+
+      const rayOrigin = player.position.clone().add(new THREE.Vector3(0, eyeHeight, 0));
+      const rayDirection = new THREE.Vector3();
+      camera.getWorldDirection(rayDirection);
+      const hit = voxelRaycast(rayOrigin, rayDirection, 6);
+
+      if (breakingBlock) {
+          const isLookingAtSameBlock = hit && hit.voxel.x === breakingBlock.x && hit.voxel.y === breakingBlock.y && hit.voxel.z === breakingBlock.z;
+
+          if (!isLookingAtSameBlock) {
+              // Player looked away, cancel breaking
+              handleBlockInteraction(0, 'up');
+          } else {
+              const elapsedTime = performance.now() - breakingStartTime;
+              if (elapsedTime >= breakingDuration) {
+                  destroyBlock(breakingBlock);
+                  handleBlockInteraction(0, 'up'); // Stop breaking after success
+              }
+          }
+      }
+
+      if (hit) { // The center of the outline should be the center of the voxel
+        outline.position.set(hit.voxel.x + 0.5, hit.voxel.y + 0.5, hit.voxel.z + 0.5);
+        outline.visible = true;
+      } else {
+        outline.visible = false;
+      }
+
+      renderer.render(scene, camera);
+      updateFPSCounter();
+      requestAnimationFrame(tick);
+    }
+
+    function destroyBlock(voxel) {
+      const kDel = keyOf(voxel.x, voxel.y, voxel.z);
+      if (voxels.delete(kDel)) {
+        const material = voxelColors.get(kDel);
+        voxelColors.delete(kDel);
+        const chunk = getChunkForVoxel(voxel.x, voxel.y, voxel.z);
+        if (chunk) {
+            chunk.voxels.delete(kDel);
+            rebuildChunk(chunk);
+        }
+        if (gameMode === 'survival') {
+          let blockNameToAdd;
+          if (material === COLORS.grass) {
+            blockNameToAdd = 'dirt';
+          } else if (material === COLORS.oak_log) {
+            blockNameToAdd = 'oak_log';
+          } else if (material && material.name) {
+            blockNameToAdd = material.name;
+          }
+
+          if (blockNameToAdd && blockTypes[blockNameToAdd]) {
+            const block = blockTypes[blockNameToAdd];
+            const existingItemIndex = hotbarItems.findIndex(item => item && item.material === block.material);
+            if (existingItemIndex > -1) {
+              hotbarItems[existingItemIndex].count++;
+            } else {
+              const emptySlotIndex = hotbarItems.findIndex(item => item === null);
+              if (emptySlotIndex > -1) {
+                hotbarItems[emptySlotIndex] = { ...block, count: 1 };
+              }
+            }
+            updateHotbarUI();
+          }
+        }
+      }
+    }
+
+    function getChunkForVoxel(vx, vy, vz) {
+        const cx = Math.floor(vx / CHUNK_SIZE) * CHUNK_SIZE;
+        const cy = Math.floor(vy / CHUNK_SIZE) * CHUNK_SIZE;
+        const cz = Math.floor(vz / CHUNK_SIZE) * CHUNK_SIZE;
+        const chunkKey = keyOf(cx, cy, cz);
+        return chunks.get(chunkKey);
+    }
+
+    function rebuildChunk(chunk) {
+        if (chunk) {
+            if (chunk.mesh) scene.remove(chunk.mesh);
+            if (chunk.simpleMesh) scene.remove(chunk.simpleMesh);
+            chunk.buildMeshes(); // Rebuild with correct culling
+            // Add the correct mesh back to the scene based on its current detail state
+            if (chunk.detailed) {
+                scene.add(chunk.mesh);
+            } else {
+                scene.add(chunk.simpleMesh);
+            }
+        }
+    }
 
     function placeSpawnOnTop() {
       const sx = 0, sz = 0;
@@ -963,107 +1149,6 @@ async function runGame(gameMode, worldType) {
       newActiveChunks.forEach(key => activeChunks.add(key));
     }
 
-    function tick(now) {
-      now = now || performance.now();
-      if (!tick.last) {
-        tick.last = now;
-        updateChunks(player.position);
-        placeSpawnOnTop();
-      }
-
-      // Update chunks periodically
-      if (now - (tick.lastChunkUpdate || 0) > 500) {
-        updateChunks(player.position);
-        tick.lastChunkUpdate = now;
-      }
-
-      const dt = now - lastFrameTime;
-
-      if (dt < FRAME_DURATION) {
-        requestAnimationFrame(tick);
-        return;
-      }
-
-      lastFrameTime = now;
-
-      const deltaTime = Math.min(0.033, (now - tick.last) / 1000);
-      tick.last = now;
-
-      // Update day/night cycle
-      timeOfDay += deltaTime / dayDuration;
-      if (timeOfDay >= 1) timeOfDay -= 1;
-      updateDayNightCycle(timeOfDay);
-      
-      const isSneaking = pressedKeys.has(keys.sneak);
-
-      if (mode === 'player') {
-        const isSprinting = pressedKeys.has(keys.sprint) && pressedKeys.has(keys.forward) && !isSneaking;
-        const sprintSpeedMultiplier = 5.0 / pAccel;
-
-        let currentAccel = isSneaking ? pAccel * 0.4 : pAccel;
-
-        if (isSprinting) currentAccel *= sprintSpeedMultiplier;
-        
-        const forward = new THREE.Vector3(-Math.sin(pyaw), 0, -Math.cos(pyaw));
-        const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0));
-        let wish = new THREE.Vector3();
-
-        if (pressedKeys.has(keys.forward)) wish.add(forward);
-        if (pressedKeys.has(keys.backward)) wish.sub(forward);
-        if (pressedKeys.has(keys.left)) wish.sub(right);
-        if (pressedKeys.has(keys.right)) wish.add(right);
-
-        wish.normalize();
-
-        const wishVel = new THREE.Vector3(wish.x, 0, wish.z).multiplyScalar(currentAccel);
-
-        if (flightMode) {
-          pVelocity.lerp(wishVel, pDamp * deltaTime);
-          pVelY = 0;
-          if (pressedKeys.has(keys.jump)) pVelY = currentAccel;
-          if (pressedKeys.has(keys.sprint) || pressedKeys.has('ControlRight')) pVelY = -currentAccel;
-          
-          moveAxis('x', pVelocity.x * deltaTime);
-          moveAxis('y', pVelY * deltaTime);
-          moveAxis('z', pVelocity.z * deltaTime);
-        } else {
-          pVelocity.lerp(wishVel, pDamp * deltaTime);
-          pVelY -= gravity * deltaTime;
-          pVelY = Math.max(pVelY, TERMINAL_VELOCITY);
-
-          moveAxis('x', pVelocity.x * deltaTime);
-          moveAxis('y', pVelY * deltaTime);
-          moveAxis('z', pVelocity.z * deltaTime);
-        }
-
-        clampToWorld();
-
-        // Update camera to follow player
-        playerCube.position.y = playerHeight / 2; // Обновляем позицию куба игрока в соответствии с новой высотой
-        camera.position.copy(player.position);
-        camera.position.y += eyeHeight;
-        camera.rotation.order = 'YXZ';
-        camera.rotation.y = pyaw;
-        camera.rotation.x = ppitch;
-      }
-
-      const rayOrigin = player.position.clone().add(new THREE.Vector3(0, eyeHeight, 0));
-      const rayDirection = new THREE.Vector3();
-      camera.getWorldDirection(rayDirection);
-      const hit = voxelRaycast(rayOrigin, rayDirection, 6);
-
-      if (hit) { // The center of the outline should be the center of the voxel
-        outline.position.set(hit.voxel.x + 0.5, hit.voxel.y + 0.5, hit.voxel.z + 0.5);
-        outline.visible = true;
-      } else {
-        outline.visible = false;
-      }
-
-      renderer.render(scene, camera);
-      updateFPSCounter();
-      requestAnimationFrame(tick);
-    }
-
     requestAnimationFrame(tick);
 
     window.addEventListener('resize', () => {
@@ -1101,4 +1186,6 @@ try {
   boot().catch(err => console.error('Failed to initialize scene:', err));
 } catch (err) {
   console.error('Error during boot:', err);
+}
+nsole.error('Error during boot:', err);
 }
