@@ -101,7 +101,10 @@ async function runGame(gameMode, worldType) {
       grassSideTexture,
       oakLogTexture,
       oakLogTopTexture,
-      oakPlanksTexture
+      oakPlanksTexture,
+      leavesTexture,
+      tallGrassTexture,
+      threadTexture
     ] = await Promise.all([
       loadTexture('assets/textures/Dirt.png').catch(e => console.error("Failed to load dirt texture", e)),
       loadTexture('assets/textures/stone.png').catch(e => console.error("Failed to load stone texture", e)),
@@ -110,6 +113,9 @@ async function runGame(gameMode, worldType) {
       loadTexture('assets/textures/Oak_Log.png').catch(e => console.error("Failed to load oak_log texture", e)),
       loadTexture('assets/textures/Oak_Log_on_top_and_down.png').catch(e => console.error("Failed to load oak_log_top texture", e)),
       loadTexture('assets/textures/Oak_Planks.png').catch(e => console.error("Failed to load oak_planks texture", e)),
+      loadTexture('assets/textures/Leaves.png').catch(e => console.error("Failed to load leaves texture", e)),
+      loadTexture('assets/textures/Grass.png').catch(e => console.error("Failed to load tall_grass texture", e)), // Using Grass.png as requested
+      loadTexture('assets/items/String.png').catch(e => console.error("Failed to load string texture", e)),
     ]);
 
     COLORS.dirt = new THREE.MeshStandardMaterial({ map: dirtTexture, roughness: 0.9, name: 'dirt' });
@@ -119,6 +125,8 @@ async function runGame(gameMode, worldType) {
     COLORS.oak_log_side = new THREE.MeshStandardMaterial({ map: oakLogTexture, roughness: 0.9, name: 'oak_log_side' });
     COLORS.oak_log_top = new THREE.MeshStandardMaterial({ map: oakLogTopTexture, roughness: 0.9, name: 'oak_log_top' });
     COLORS.oak_planks = new THREE.MeshStandardMaterial({ map: oakPlanksTexture, roughness: 0.9, name: 'oak_planks' });
+    COLORS.leaves = new THREE.MeshStandardMaterial({ map: leavesTexture, roughness: 0.9, name: 'leaves', transparent: true, alphaTest: 0.5 });
+    COLORS.tall_grass = new THREE.MeshStandardMaterial({ map: tallGrassTexture, color: 0x66dd66, roughness: 0.9, name: 'tall_grass', transparent: true, alphaTest: 0.5 });
 
     const style = document.createElement('style');
     style.innerHTML = `
@@ -135,14 +143,19 @@ async function runGame(gameMode, worldType) {
     `;
     document.head.appendChild(style);
 
+    const items = {
+      thread: { icon: 'assets/items/String.png', name: 'Thread' }
+    };
+
     const blockData = {
-      grass: { hardness: 1, tool: 'hand' },
-      dirt: { hardness: 1, tool: 'hand' },
-      stone: { hardness: Infinity, tool: 'pickaxe' },
-      oak_log: { hardness: 3, tool: 'axe' },
-      oak_planks: { hardness: 2, tool: 'axe' },
-      crafting_table: { hardness: 2, tool: 'axe' },
-      oak_leaves: { hardness: 0.2, tool: 'hand' },
+      grass: { hardness: 1, tool: 'hand', solid: true },
+      dirt: { hardness: 2.5, tool: 'hand', solid: true },
+      stone: { hardness: Infinity, tool: 'pickaxe', solid: true },
+      oak_log: { hardness: 3, tool: 'axe', solid: true },
+      oak_planks: { hardness: 2, tool: 'axe', solid: true },
+      crafting_table: { hardness: 2, tool: 'axe', solid: true },
+      leaves: { hardness: 0.2, tool: 'hand', solid: true },
+      tall_grass: { hardness: 0, tool: 'hand', solid: false, drops: { item: 'thread', min: 0, max: 1 } },
     };
 
     const blockTypes = {
@@ -152,6 +165,8 @@ async function runGame(gameMode, worldType) {
       oak_log: { material: COLORS.oak_log, icon: 'assets/textures/Oak_Log.png', data: blockData.oak_log },
       oak_planks: { material: COLORS.oak_planks, icon: 'assets/textures/Oak_Planks.png', data: blockData.oak_planks },
       crafting_table: { material: COLORS.oak_planks, icon: 'assets/textures/Oak_Planks.png', data: blockData.crafting_table },
+      leaves: { material: COLORS.leaves, icon: 'assets/textures/Leaves.png', data: blockData.leaves },
+      tall_grass: { material: COLORS.tall_grass, icon: 'assets/textures/Grass.png', data: blockData.tall_grass },
     };
 
     if (gameMode === 'creative') {
@@ -177,6 +192,32 @@ async function runGame(gameMode, worldType) {
     const settingsMenu = document.getElementById('settings-menu');
     const sensitivitySlider = document.getElementById('sensitivity-slider');
     const craftingContainer = document.getElementById('crafting-container');
+
+    const healthContainer = document.createElement('div');
+    healthContainer.id = 'health-container';
+    healthContainer.style.position = 'absolute';
+    healthContainer.style.bottom = '50px'; // Position above hotbar
+    healthContainer.style.left = '10px';
+    healthContainer.style.color = '#ff0000';
+    healthContainer.style.fontSize = '24px';
+    healthContainer.style.textShadow = '1px 1px 2px black';
+    document.body.appendChild(healthContainer);
+
+    let playerHealth = 20;
+    const maxHealth = 20;
+
+    function updateHealthUI() {
+        healthContainer.innerHTML = '';
+        const fullHearts = Math.floor(playerHealth / 2);
+        const halfHeart = playerHealth % 2;
+        const emptyHearts = (maxHealth / 2) - fullHearts - halfHeart;
+
+        for (let i = 0; i < fullHearts; i++) healthContainer.innerHTML += '♥';
+        // Using a different character for empty heart for clarity
+        for (let i = 0; i < (halfHeart + emptyHearts); i++) healthContainer.innerHTML += '♡';
+    }
+
+    updateHealthUI(); // Initial call
 
     // Renderer
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
@@ -276,6 +317,10 @@ async function runGame(gameMode, worldType) {
 
     let pointerLockPending = false;
 
+    let breakingBlock = null;
+    let breakingStartTime = 0;
+    let breakingDuration = 0;
+
     window.addEventListener('keydown', (e) => {
       if (e.code.startsWith('Digit')) {
           const digit = parseInt(e.code.slice(5), 10);
@@ -372,10 +417,6 @@ async function runGame(gameMode, worldType) {
       }
     });
 
-    let breakingBlock = null;
-    let breakingStartTime = 0;
-    let breakingDuration = 0;
-
     canvas.addEventListener('mousedown', (e) => {
       if (mode === 'player' && document.pointerLockElement === canvas) {
         handleBlockInteraction(e.button, 'down');
@@ -418,11 +459,24 @@ async function runGame(gameMode, worldType) {
     const CHUNK_SIZE = 16;
     const chunks = new Map();
 
+    const crossPlaneGeometry = new THREE.BufferGeometry();
+    const vertices = new Float32Array([
+      -0.5, -0.5, 0,  0.5, -0.5, 0,  0.5, 0.5, 0,  0.5, 0.5, 0,  -0.5, 0.5, 0,  -0.5, -0.5, 0,
+      0, -0.5, -0.5,  0, -0.5, 0.5,  0, 0.5, 0.5,  0, 0.5, 0.5,  0, 0.5, -0.5,  0, -0.5, -0.5,
+    ]);
+    const uvs = new Float32Array([
+      0, 0,  1, 0,  1, 1,  1, 1,  0, 1,  0, 0,
+      0, 0,  1, 0,  1, 1,  1, 1,  0, 1,  0, 0,
+    ]);
+    crossPlaneGeometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+    crossPlaneGeometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+
     class Chunk {
       constructor(x, y, z, size) {
         this.position = new THREE.Vector3(x, y, z);
         this.size = size;
         this.voxels = new Set();
+        this.foliage = new Set();
         this.mesh = new THREE.Group();
         this.simpleMesh = null;
         this.detailed = false;
@@ -432,20 +486,23 @@ async function runGame(gameMode, worldType) {
         );
       }
 
-      addVoxel(x, y, z) {
-        this.voxels.add(keyOf(x, y, z));
+      addVoxel(x, y, z, solid = true) {
+        const key = keyOf(x, y, z);
+        if (solid) {
+          this.voxels.add(key);
+        } else {
+          this.foliage.add(key);
+        }
       }
 
       buildMeshes() {
         this.mesh.children.forEach(mesh => mesh.geometry.dispose()); // Dispose old detailed geometry
         this.mesh.clear();
     
-        // Create a separate geometry for textured materials that includes UVs
         const texturedGeometry = new THREE.BoxGeometry(1, 1, 1);
 
+        // --- Solid Voxels ---
         const voxelsByMaterial = new Map();
-    
-        // Group voxels by material
         this.voxels.forEach(k => {
           const material = voxelColors.get(k) || COLORS.stone;
           if (!voxelsByMaterial.has(material)) {
@@ -456,30 +513,14 @@ async function runGame(gameMode, worldType) {
     
         voxelsByMaterial.forEach((voxelList, material) => {
           let meshMaterial;
-          let meshGeometry = texturedGeometry; // Use geometry with UVs for all
+          let meshGeometry = texturedGeometry;
     
           if (material === COLORS.grass) {
-            meshMaterial = [
-              COLORS.grass_side, // right
-              COLORS.grass_side, // left
-              COLORS.grass_top,  // top
-              COLORS.dirt,       // bottom
-              COLORS.grass_side, // front
-              COLORS.grass_side  // back
-            ];
+            meshMaterial = [COLORS.grass_side, COLORS.grass_side, COLORS.grass_top, COLORS.dirt, COLORS.grass_side, COLORS.grass_side];
           } else if (material === COLORS.oak_log) {
-            meshMaterial = [
-              COLORS.oak_log_side, // right
-              COLORS.oak_log_side, // left
-              COLORS.oak_log_top,  // top
-              COLORS.oak_log_top,  // bottom
-              COLORS.oak_log_side, // front
-              COLORS.oak_log_side  // back
-            ];
-          } else if (material instanceof THREE.Material) {
-            meshMaterial = material;
+            meshMaterial = [COLORS.oak_log_side, COLORS.oak_log_side, COLORS.oak_log_top, COLORS.oak_log_top, COLORS.oak_log_side, COLORS.oak_log_side];
           } else {
-            meshMaterial = new THREE.MeshStandardMaterial({ color: material, roughness: 0.9 });
+            meshMaterial = material;
           }
     
           const mesh = new THREE.InstancedMesh(meshGeometry, meshMaterial, voxelList.length);
@@ -494,11 +535,26 @@ async function runGame(gameMode, worldType) {
             mesh.setMatrixAt(i, dummy.matrix);
             i++;
           });
-          
           mesh.instanceMatrix.needsUpdate = true;
-
           this.mesh.add(mesh);
         });
+
+        // --- Foliage ---
+        if (this.foliage.size > 0) {
+            const foliageMesh = new THREE.InstancedMesh(crossPlaneGeometry, COLORS.tall_grass, this.foliage.size);
+            foliageMesh.castShadow = true;
+
+            let i = 0;
+            this.foliage.forEach(k => {
+                const [vx, vy, vz] = k.split(',').map(Number);
+                dummy.position.set(centerFromVoxel(vx), centerFromVoxel(vy), centerFromVoxel(vz));
+                dummy.updateMatrix();
+                foliageMesh.setMatrixAt(i, dummy.matrix);
+                i++;
+            });
+            foliageMesh.instanceMatrix.needsUpdate = true;
+            this.mesh.add(foliageMesh);
+        }
 
         // Simple mesh (low detail)
         const simpleGeo = new THREE.BoxGeometry(this.size, this.size, this.size);
@@ -510,6 +566,7 @@ async function runGame(gameMode, worldType) {
 
     // Ensure voxels is defined
     const voxels = new Set();
+    const foliage = new Set();
 
     // Ensure voxelColors is defined
     const voxelColors = new Map();
@@ -518,9 +575,11 @@ async function runGame(gameMode, worldType) {
     const keyOf = (x, y, z) => `${x},${y},${z}`;
 
     // Noise functions will be initialized in boot()
-    let noise2D, noise3D;
+    let noise2D, noise3D, treeNoise, foliageNoise;
     noise2D = new SimplexNoise();
     noise3D = new SimplexNoise();
+    treeNoise = new SimplexNoise();
+    foliageNoise = new SimplexNoise();
 
     const HEIGHT_SCALE = 10; // Adjust the height scale
     const TERRAIN_SCALE = 0.05;
@@ -555,13 +614,68 @@ async function runGame(gameMode, worldType) {
               voxels.add(key);
               const color = worldY === height ? COLORS.grass : worldY > height - 3 ? COLORS.dirt : COLORS.stone;
               voxelColors.set(key, color);
-              chunk.addVoxel(worldX, worldY, worldZ);
+              chunk.addVoxel(worldX, worldY, worldZ, true);
+            }
+          }
+          
+          // Foliage and Tree Generation
+          if (worldType !== 'flat') {
+            if (height >= cy && height < cy + CHUNK_SIZE) {
+              if (voxelColors.get(keyOf(worldX, height, worldZ)) === COLORS.grass) {
+                // Trees
+                const treeValue = (treeNoise.noise2D(worldX * 0.1, worldZ * 0.1) + 1) * 0.5;
+                if (treeValue > 0.95) { 
+                  placeTree(worldX, height + 1, worldZ);
+                }
+                // Tall Grass
+                const foliageValue = (foliageNoise.noise2D(worldX * 0.5, worldZ * 0.5) + 1) * 0.5;
+                if (foliageValue > 0.8) {
+                  const key = keyOf(worldX, height + 1, worldZ);
+                  foliage.add(key);
+                  voxelColors.set(key, COLORS.tall_grass);
+                  chunk.addVoxel(worldX, height + 1, worldZ, false);
+                }
+              }
             }
           }
         }
       }
       chunk.buildMeshes();
       return chunk;
+    }
+
+    function placeTree(x, y, z) {
+        // Trunk
+        const trunkHeight = 4 + Math.floor(Math.random() * 3); // 4 to 6 blocks high
+        for (let i = 0; i < trunkHeight; i++) {
+            const key = keyOf(x, y + i, z);
+            voxels.add(key);
+            voxelColors.set(key, COLORS.oak_log);
+            const chunk = getChunkForVoxel(x, y + i, z);
+            if (chunk) chunk.addVoxel(x, y + i, z);
+        }
+
+        // Leaves
+        const leafRadius = 2;
+        for (let ly = y + trunkHeight - 2; ly < y + trunkHeight + 2; ly++) {
+            for (let lx = x - leafRadius; lx <= x + leafRadius; lx++) {
+                for (let lz = z - leafRadius; lz <= z + leafRadius; lz++) {
+                    const key = keyOf(lx, ly, lz);
+                    // Don't overwrite trunk
+                    if (lx === x && lz === z && ly < y + trunkHeight) continue;
+                    
+                    const dist = Math.sqrt(Math.pow(lx - x, 2) + Math.pow(ly - (y + trunkHeight -1), 2) + Math.pow(lz - z, 2));
+                    if (dist <= leafRadius + 0.5) {
+                       if (!voxels.has(key)) {
+                         voxels.add(key);
+                         voxelColors.set(key, COLORS.leaves);
+                         const chunk = getChunkForVoxel(lx, ly, lz);
+                         if (chunk) chunk.addVoxel(lx, ly, lz);
+                       }
+                    }
+                }
+            }
+        }
     }
 
     scene.add(hemi);
@@ -659,13 +773,25 @@ async function runGame(gameMode, worldType) {
         }
 
         const k = keyOf(ix, iy, iz);
+        let result = null;
+
         if (voxels.has(k)) {
+          result = { solid: true };
+        } else if (foliage.has(k)) {
+          result = { solid: false };
+        }
+
+        if (result) {
           const normal = new THREE.Vector3(0, 0, 0);
           if (lastStep === 'x') normal.set(-stepX, 0, 0);
           if (lastStep === 'y') normal.set(0, -stepY, 0);
           if (lastStep === 'z') normal.set(0, 0, -stepZ);
-          return { voxel: { x: ix, y: iy, z: iz }, normal, dist: t };
+          result.voxel = { x: ix, y: iy, z: iz };
+          result.normal = normal;
+          result.dist = t;
+          return result;
         }
+
         if (tMaxX < tMaxY) {
           if (tMaxX < tMaxZ) { t = tMaxX; ix += stepX; tMaxX += invDx; lastStep = 'x'; }
           else { t = tMaxZ; iz += stepZ; tMaxZ += invDz; lastStep = 'z'; }
@@ -688,24 +814,16 @@ async function runGame(gameMode, worldType) {
               const res = voxelRaycast(rayOrigin, rayDirection, 6);
               if (!res) return;
 
-              if (gameMode === 'creative') {
+              const blockName = findBlockName(res.voxel);
+              if (!blockName) return;
+
+              if (gameMode === 'creative' || blockTypes[blockName].data.hardness === 0) {
                   destroyBlock(res.voxel);
                   return;
               }
 
               // Survival mode logic
-              const k = keyOf(res.voxel.x, res.voxel.y, res.voxel.z);
-              const material = voxelColors.get(k);
-              const blockName = Object.keys(blockTypes).find(name => {
-                  const b = blockTypes[name];
-                  if (b.material === COLORS.grass) { // Special case for grass block string
-                    return material === COLORS.grass;
-                  }
-                  if (Array.isArray(b.material)) return b.material.includes(material);
-                  return b.material === material;
-              });
-
-              if (!blockName || blockTypes[blockName].data.hardness === Infinity) {
+              if (blockTypes[blockName].data.hardness === Infinity) {
                   return; // Cannot break this block
               }
 
@@ -730,7 +848,7 @@ async function runGame(gameMode, worldType) {
         if (!res) return;
 
         const selectedItem = hotbarItems[selectedHotbarIndex];
-        if (!selectedItem) return; // Don't place if slot is empty
+        if (!selectedItem || !selectedItem.data.solid) return; // Can only place solid blocks
 
         if (gameMode === 'survival' && selectedItem.count === 0) {
           return;
@@ -741,7 +859,7 @@ async function runGame(gameMode, worldType) {
         const aabb = playerAABB();
         const vminX = nx, vmaxX = nx + 1, vminY = ny, vmaxY = ny + 1, vminZ = nz, vmaxZ = nz + 1;
         const overlap = (minA, maxA, minB, maxB) => (maxA > minB) && (minA < maxB);
-        if (!voxels.has(k) && !(overlap(aabb.minX, aabb.maxX, vminX, vmaxX) && overlap(aabb.minY, aabb.maxY, vminY, vmaxY) && overlap(aabb.minZ, aabb.maxZ, vminZ, vmaxZ))) {
+        if (!voxels.has(k) && !foliage.has(k) && !(overlap(aabb.minX, aabb.maxX, vminX, vmaxX) && overlap(aabb.minY, aabb.maxY, vminY, vmaxY) && overlap(aabb.minZ, aabb.maxZ, vminZ, vmaxZ))) {
           voxels.add(k);
           voxelColors.set(k, selectedItem.material);
           let chunk = getChunkForVoxel(nx, ny, nz);
@@ -753,7 +871,7 @@ async function runGame(gameMode, worldType) {
               chunk = new Chunk(cx, cy, cz, CHUNK_SIZE);
               chunks.set(chunkKey, chunk);
           }
-          chunk.addVoxel(nx, ny, nz);
+          chunk.addVoxel(nx, ny, nz, true);
           rebuildChunk(chunk);
 
           if (gameMode === 'survival') {
@@ -883,38 +1001,70 @@ async function runGame(gameMode, worldType) {
       requestAnimationFrame(tick);
     }
 
+    function findBlockName(voxel) {
+      const k = keyOf(voxel.x, voxel.y, voxel.z);
+      const material = voxelColors.get(k);
+      return Object.keys(blockTypes).find(name => {
+          const b = blockTypes[name];
+          if (b.material === COLORS.grass) { // Special case for grass block
+            return material === COLORS.grass;
+          }
+          if (Array.isArray(b.material)) return b.material.includes(material);
+          return b.material === material;
+      });
+    }
+
+    function addItemToInventory(item, count) {
+      if (count === 0) return;
+      // Try to stack with existing items
+      const existingItemIndex = hotbarItems.findIndex(i => i && i.name === item.name && i.count !== Infinity);
+      if (existingItemIndex > -1) {
+        hotbarItems[existingItemIndex].count += count;
+      } else {
+        // Otherwise, find an empty slot
+        const emptySlotIndex = hotbarItems.findIndex(i => i === null);
+        if (emptySlotIndex > -1) {
+          hotbarItems[emptySlotIndex] = { ...item, count: count };
+        }
+      }
+      updateHotbarUI();
+    }
+
     function destroyBlock(voxel) {
       const kDel = keyOf(voxel.x, voxel.y, voxel.z);
-      if (voxels.delete(kDel)) {
-        const material = voxelColors.get(kDel);
+      const blockName = findBlockName(voxel);
+      const wasSolid = blockData[blockName]?.solid;
+
+      let deleted = false;
+      if (wasSolid) {
+        deleted = voxels.delete(kDel);
+      } else {
+        deleted = foliage.delete(kDel);
+      }
+
+      if (deleted) {
         voxelColors.delete(kDel);
         const chunk = getChunkForVoxel(voxel.x, voxel.y, voxel.z);
         if (chunk) {
-            chunk.voxels.delete(kDel);
+            if (wasSolid) {
+              chunk.voxels.delete(kDel);
+            } else {
+              chunk.foliage.delete(kDel);
+            }
             rebuildChunk(chunk);
         }
-        if (gameMode === 'survival') {
-          let blockNameToAdd;
-          if (material === COLORS.grass) {
-            blockNameToAdd = 'dirt';
-          } else if (material === COLORS.oak_log) {
-            blockNameToAdd = 'oak_log';
-          } else if (material && material.name) {
-            blockNameToAdd = material.name;
-          }
 
-          if (blockNameToAdd && blockTypes[blockNameToAdd]) {
-            const block = blockTypes[blockNameToAdd];
-            const existingItemIndex = hotbarItems.findIndex(item => item && item.material === block.material);
-            if (existingItemIndex > -1) {
-              hotbarItems[existingItemIndex].count++;
-            } else {
-              const emptySlotIndex = hotbarItems.findIndex(item => item === null);
-              if (emptySlotIndex > -1) {
-                hotbarItems[emptySlotIndex] = { ...block, count: 1 };
-              }
+        if (gameMode === 'survival') {
+          const data = blockData[blockName];
+          if (data && data.drops) {
+            const { item, min, max } = data.drops;
+            const dropCount = Math.floor(Math.random() * (max - min + 1)) + min;
+            if (dropCount > 0) {
+              addItemToInventory(items[item], dropCount);
             }
-            updateHotbarUI();
+          } else if (wasSolid) { // Only drop blocks if they are solid
+            const block = blockTypes[blockName];
+            addItemToInventory(block, 1);
           }
         }
       }
@@ -1186,6 +1336,4 @@ try {
   boot().catch(err => console.error('Failed to initialize scene:', err));
 } catch (err) {
   console.error('Error during boot:', err);
-}
-nsole.error('Error during boot:', err);
 }
