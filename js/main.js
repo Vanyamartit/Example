@@ -1,7 +1,125 @@
 /* global THREE */
 import SimplexNoise from './lib/simplex-noise.js';
 import { COLORS, CUBE_FACES } from './config.js';
+import { COLORS, CUBE_FACES } from './config.js';
 import { initMainMenu } from './ui/menu.js';
+import { showCraftingUI, hideCraftingUI } from './crafting.js';
+import { initHUD, updateHotbarUI, setSelectedHotbarIndex, hotbarItems, updateFPSCounter } from './ui/hud.js';
+
+
+// Simple script loader with multi-source fallback
+
+function ensureScript(urls, testFn) {
+
+  const list = Array.isArray(urls) ? urls : [urls];
+
+  let lastError;
+
+  return list.reduce((chain, url) => {
+    return chain.catch(() => new Promise((resolve, reject) => {
+
+      if (testFn()) return resolve();
+
+      const s = document.createElement('script');
+
+      s.src = url;
+
+      s.async = true;
+
+      s.onload = () => (testFn() ? resolve() : reject(new Error('Failed to load: ' + url)));
+
+      s.onerror = () => {
+
+        lastError = new Error('Network error: ' + url);
+
+        reject(lastError);
+
+      };
+
+      document.head.appendChild(s);
+
+    }));
+
+  }, Promise.reject()).catch(() => Promise.reject(lastError || new Error('All sources failed')));
+
+}
+
+
+async function boot() {
+  const { gameMode, worldType } = await initMainMenu();
+  runGame(gameMode, worldType);
+}
+
+async function runGame(gameMode, worldType) {
+    initHUD(); // Initialize HUD components
+    const textureLoader = new THREE.TextureLoader();
+
+    // Promisify texture loading
+    const loadTexture = (url) => {
+      return new Promise((resolve, reject) => {
+        textureLoader.load(url, resolve, undefined, reject);
+      });
+    };
+
+    // ... existing code for game setup (e.g., scene, camera, renderer, world generation) ...
+    // This is where the original game setup would be, before hotbar initialization.
+
+    if (gameMode === 'creative') {
+      // Assuming blockTypes is defined elsewhere in the existing code
+      hotbarItems = [
+        { ...blockTypes.stone, count: Infinity },
+        { ...blockTypes.dirt, count: Infinity },
+        { ...blockTypes.oak_log, count: Infinity },
+        { ...blockTypes.oak_planks, count: Infinity },
+        { ...blockTypes.crafting_table, count: Infinity }
+      ;
+    } else {
+      hotbarItems = [null, null, null, null, null];
+    }
+    updateHotbarUI();
+
+    // ... existing code (e.g., more game setup, initial player position) ...
+
+    window.addEventListener('keydown', (e) => {
+      if (e.code.startsWith('Digit')) {
+          const digit = parseInt(e.code.slice(5), 10);
+          if (digit >= 1 && digit <= 5) {
+              setSelectedHotbarIndex(digit - 1);
+          }
+      }
+
+      // ... existing code (other keydown handlers, e.g., movement, inventory, crafting UI toggles) ...
+    });
+
+    // ... existing code (e.g., mouse event listeners, game loop setup) ...
+
+    function tick(now) {
+      // ... existing code (e.g., physics updates, player movement, block interactions) ...
+
+      // Assuming renderer, scene, camera, flightMode are defined in the existing code
+      renderer.render(scene, camera);
+      updateFPSCounter(flightMode); // Assuming flightMode is defined in the existing code
+      requestAnimationFrame(tick);
+    }
+
+    // ... existing code (e.g., initial call to requestAnimationFrame(tick)) ...
+    // For example: requestAnimationFrame(tick);
+}
+
+// Function to calculate the center position of a voxel
+function centerFromVoxel(coord) { // A voxel at (x,y,z) is centered at (x,y,z)
+  return coord + 0.5;
+}
+
+// Ensure dummy is defined
+// Assuming THREE is globally available or imported elsewhere
+const dummy = new THREE.Object3D();
+
+try {
+  boot().catch(err => console.error('Failed to initialize scene:', err));
+} catch (err) {
+  console.error('Error during boot:', err);
+}
 import { showCraftingUI, hideCraftingUI } from './crafting.js';
 
 
